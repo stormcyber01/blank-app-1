@@ -459,7 +459,7 @@ class Finopoly:
         if not self.game_over:
             self.play_turn()
 
-       def play_turn(self):
+    def play_turn(self):
         if not self.players:  # Add this check
             return  # Exit if there are no players
         player = self.players[self.current_player_index]
