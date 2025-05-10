@@ -459,7 +459,9 @@ class Finopoly:
         if not self.game_over:
             self.play_turn()
 
-    def play_turn(self):
+       def play_turn(self):
+        if not self.players:  # Add this check
+            return  # Exit if there are no players
         player = self.players[self.current_player_index]
         st.subheader(f"{player.name}'s Turn (Round {self.current_round})")
         st.write(f"Current Position: {player.position}")
@@ -490,7 +492,8 @@ class Finopoly:
             elif tile.tile_type == "Special":
                 self.handle_special_tile_ui(player, tile)
         else:
-            st.stop() # prevent the rest of the code from running until the button is clicked
+            st.stop()
+ # prevent the rest of the code from running until the button is clicked
 
 def main():
     st.title("Finopoly")
