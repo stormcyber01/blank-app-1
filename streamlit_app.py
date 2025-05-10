@@ -313,7 +313,7 @@ class Finopoly:
                         st.write(f"You raised ${amount}M through equity.")
                         st.session_state.game.next_player_turn()
             elif selected_option.name == "IPO":
-                if st.button("Conduct IPO"):
+                    if st.button("Conduct IPO"):
                         player.receive(selected_option.max_amount)
                         player.add_financing(selected_option, selected_option.max_amount)
                         st.write(f"You conducted an IPO and raised ${selected_option.max_amount}M.")
