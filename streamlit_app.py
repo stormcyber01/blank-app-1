@@ -1,1304 +1,523 @@
-{
-  "nbformat": 4,
-  "nbformat_minor": 0,
-  "metadata": {
-    "colab": {
-      "provenance": []
-    },
-    "kernelspec": {
-      "name": "python3",
-      "display_name": "Python 3"
-    },
-    "language_info": {
-      "name": "python"
-    }
-  },
-  "cells": [
-    {
-      "cell_type": "code",
-      "source": [
-        "import random\n",
-        "import math\n",
-        "import time\n",
-        "from tabulate import tabulate\n",
-        "import os\n",
-        "\n",
-        "class Project:\n",
-        "    def __init__(self, name, cost, life, annual_cash_flow, real_option, risk_level, user_gain):\n",
-        "        self.name = name\n",
-        "        self.cost = cost\n",
-        "        self.life = life\n",
-        "        self.annual_cash_flow = annual_cash_flow\n",
-        "        self.real_option = real_option\n",
-        "        self.risk_level = risk_level\n",
-        "        self.user_gain = user_gain\n",
-        "        self.owner = None\n",
-        "        self.purchase_round = None\n",
-        "\n",
-        "    def calculate_npv(self, discount_rate=0.10):\n",
-        "        \"\"\"Calculate Net Present Value of the project\"\"\"\n",
-        "        npv = -self.cost\n",
-        "        for year in range(1, self.life + 1):\n",
-        "            npv += self.annual_cash_flow / ((1 + discount_rate) ** year)\n",
-        "        return npv\n",
-        "\n",
-        "    def calculate_irr(self):\n",
-        "        \"\"\"Calculate Internal Rate of Return\"\"\"\n",
-        "        # Simple IRR approximation\n",
-        "        return (self.annual_cash_flow * self.life - self.cost) / (self.cost * self.life)\n",
-        "\n",
-        "    def calculate_payback_period(self):\n",
-        "        \"\"\"Calculate Payback Period\"\"\"\n",
-        "        return self.cost / self.annual_cash_flow\n",
-        "\n",
-        "    def calculate_profitability_index(self, discount_rate=0.10):\n",
-        "        \"\"\"Calculate Profitability Index\"\"\"\n",
-        "        present_value = 0\n",
-        "        for year in range(1, self.life + 1):\n",
-        "            present_value += self.annual_cash_flow / ((1 + discount_rate) ** year)\n",
-        "        return present_value / self.cost\n",
-        "\n",
-        "class FinancingOption:\n",
-        "    def __init__(self, name, description, max_amount, conditions, impact):\n",
-        "        self.name = name\n",
-        "        self.description = description\n",
-        "        self.max_amount = max_amount\n",
-        "        self.conditions = conditions\n",
-        "        self.impact = impact  # Function or description of impact on player\n",
-        "\n",
-        "class Event:\n",
-        "    def __init__(self, name, description, impact):\n",
-        "        self.name = name\n",
-        "        self.description = description\n",
-        "        self.impact = impact  # Function to apply event impact\n",
-        "\n",
-        "class Tile:\n",
-        "    def __init__(self, position, name, tile_type, action=None):\n",
-        "        self.position = position\n",
-        "        self.name = name\n",
-        "        self.tile_type = tile_type  # \"Investment\", \"Financing\", \"Event\", \"Neutral\", \"Special\"\n",
-        "        self.action = action  # Associated project, financing, or event\n",
-        "\n",
-        "class Player:\n",
-        "    def __init__(self, name, starting_cash=100):\n",
-        "        self.name = name\n",
-        "        self.cash = starting_cash  # Starting with $100M\n",
-        "        self.users = 1  # Starting with 1M users\n",
-        "        self.position = 0\n",
-        "        self.projects = []\n",
-        "        self.financing_history = []\n",
-        "        self.debt = 0\n",
-        "        self.equity_dilution = 0\n",
-        "        self.vc_funding_used = False\n",
-        "        self.ipo_done = False\n",
-        "        self.skip_next_turn = False\n",
-        "\n",
-        "    def calculate_total_npv(self, current_round):\n",
-        "        \"\"\"Calculate total NPV of all projects\"\"\"\n",
-        "        total_npv = 0\n",
-        "        for project in self.projects:\n",
-        "            # Calculate remaining cash flows based on when project was purchased\n",
-        "            remaining_life = project.life - (current_round - project.purchase_round)\n",
-        "            if remaining_life > 0:\n",
-        "                npv = 0\n",
-        "                for year in range(1, remaining_life + 1):\n",
-        "                    npv += project.annual_cash_flow / ((1 + 0.10) ** year)\n",
-        "                total_npv += npv\n",
-        "\n",
-        "        # Apply equity dilution if any\n",
-        "        total_npv *= (1 - self.equity_dilution)\n",
-        "\n",
-        "        # Apply IPO penalty if done\n",
-        "        if self.ipo_done:\n",
-        "            total_npv *= 0.7  # 30% NPV penalty for IPO\n",
-        "\n",
-        "        return total_npv\n",
-        "\n",
-        "    def can_afford(self, amount):\n",
-        "        \"\"\"Check if player can afford a purchase\"\"\"\n",
-        "        return self.cash >= amount\n",
-        "\n",
-        "    def pay(self, amount):\n",
-        "        \"\"\"Pay an amount\"\"\"\n",
-        "        if self.can_afford(amount):\n",
-        "            self.cash -= amount\n",
-        "            return True\n",
-        "        return False\n",
-        "\n",
-        "    def receive(self, amount):\n",
-        "        \"\"\"Receive an amount\"\"\"\n",
-        "        self.cash += amount\n",
-        "\n",
-        "    def add_users(self, count):\n",
-        "        \"\"\"Add users\"\"\"\n",
-        "        self.users += count\n",
-        "\n",
-        "    def lose_users(self, count):\n",
-        "        \"\"\"Lose users\"\"\"\n",
-        "        self.users = max(0, self.users - count)\n",
-        "\n",
-        "    def add_project(self, project, current_round):\n",
-        "        \"\"\"Add a project to player's portfolio\"\"\"\n",
-        "        project.owner = self\n",
-        "        project.purchase_round = current_round\n",
-        "        self.projects.append(project)\n",
-        "\n",
-        "    def add_financing(self, financing, amount):\n",
-        "        \"\"\"Add financing to player's history\"\"\"\n",
-        "        self.financing_history.append((financing, amount))\n",
-        "\n",
-        "        if financing.name == \"Debt\":\n",
-        "            self.debt += amount\n",
-        "        elif financing.name == \"VC Funding\":\n",
-        "            self.vc_funding_used = True\n",
-        "            self.equity_dilution += 0.10  # 10% NPV penalty\n",
-        "        elif financing.name == \"Equity\":\n",
-        "            self.equity_dilution += 0.20  # 20% NPV penalty\n",
-        "        elif financing.name == \"IPO\":\n",
-        "            self.ipo_done = True\n",
-        "            # IPO penalty applied in NPV calculation\n",
-        "\n",
-        "    def pay_debt_interest(self):\n",
-        "        \"\"\"Pay interest on debt\"\"\"\n",
-        "        interest = self.debt * 0.06  # 6% annual interest\n",
-        "        if self.can_afford(interest):\n",
-        "            self.cash -= interest\n",
-        "            return True\n",
-        "        return False\n",
-        "\n",
-        "    def collect_project_revenues(self):\n",
-        "        \"\"\"Collect revenues from all projects\"\"\"\n",
-        "        total_revenue = 0\n",
-        "        for project in self.projects:\n",
-        "            total_revenue += project.annual_cash_flow\n",
-        "        self.cash += total_revenue\n",
-        "        return total_revenue\n",
-        "\n",
-        "class Finopoly:\n",
-        "    def __init__(self):\n",
-        "        self.players = []\n",
-        "        self.current_round = 1\n",
-        "        self.current_player_index = 0\n",
-        "        self.board = []\n",
-        "        self.projects = []\n",
-        "        self.financing_options = []\n",
-        "        self.events = []\n",
-        "        self.game_over = False\n",
-        "\n",
-        "        self.initialize_game()\n",
-        "\n",
-        "    def initialize_game(self):\n",
-        "        \"\"\"Initialize game components\"\"\"\n",
-        "        self.create_projects()\n",
-        "        self.create_financing_options()\n",
-        "        self.create_events()\n",
-        "        self.create_board()\n",
-        "\n",
-        "    def create_projects(self):\n",
-        "        \"\"\"Create project cards\"\"\"\n",
-        "        self.projects = [\n",
-        "            Project(\"Expand to Asia Market\", 50, 3, 20, \"Expand\", \"High\", 2),\n",
-        "            Project(\"Referral Program\", 20, 3, 12, \"Scale\", \"Low\", 1.5),\n",
-        "            Project(\"Retail Partnership\", 40, 3, 18, \"User Trust\", \"High\", 1.8),\n",
-        "            Project(\"AI Fraud Prevention\", 30, 3, 15, \"Efficiency Gain\", \"Medium\", 1),\n",
-        "            Project(\"Product Launch\", 35, 2, 25, \"Rebrand\", \"Medium\", 2.5),\n",
-        "            Project(\"Mobile App Redesign\", 25, 2, 15, \"User Experience\", \"Low\", 1.2),\n",
-        "            Project(\"Blockchain Integration\", 45, 3, 17, \"Security\", \"High\", 1.5),\n",
-        "            Project(\"Customer Support AI\", 30, 2, 18, \"Efficiency\", \"Medium\", 0.8)\n",
-        "        ]\n",
-        "\n",
-        "    def create_financing_options(self):\n",
-        "        \"\"\"Create financing options\"\"\"\n",
-        "        self.financing_options = [\n",
-        "            FinancingOption(\"Debt\", \"Loan at 6% annual interest\", 50, \"Max $50M per round\", \"6% annual interest\"),\n",
-        "            FinancingOption(\"VC Funding\", \"Raise $40M but lose 10% NPV\", 40, \"Once per game\", \"10% NPV dilution\"),\n",
-        "            FinancingOption(\"Equity\", \"Raise capital but dilute 20% NPV\", 60, \"Once per round\", \"20% NPV dilution\"),\n",
-        "            FinancingOption(\"IPO\", \"Raise $100M but lose 30% of final NPV\", 100, \"Only in Round 4 or 5\", \"30% NPV penalty\")\n",
-        "        ]\n",
-        "\n",
-        "    def create_events(self):\n",
-        "        \"\"\"Create event cards\"\"\"\n",
-        "        self.events = [\n",
-        "            Event(\"Economic Downturn\", \"Economic downturn affects revenue\", \"−15% revenue this round\"),\n",
-        "            Event(\"Cybersecurity Breach\", \"Security breach costs money\", \"−$15M cash unless secured\"),\n",
-        "            Event(\"Data Leak Scandal\", \"Data leak affects user trust\", \"Lose 1M users\"),\n",
-        "            Event(\"Regulatory Fine\", \"Regulatory issues lead to fine\", \"−$10M cash if compliance project missing\"),\n",
-        "            Event(\"System Crash\", \"Major system failure\", \"Lose 1 turn\"),\n",
-        "            Event(\"Market Expansion\", \"New market opportunity\", \"Gain 0.5M users\"),\n",
-        "            Event(\"Strategic Partnership\", \"New partnership opportunity\", \"Gain $10M cash\"),\n",
-        "            Event(\"Talent Acquisition\", \"Key talent joins company\", \"Next project costs 10% less\")\n",
-        "        ]\n",
-        "\n",
-        "    def create_board(self):\n",
-        "        \"\"\"Create game board with 20 tiles\"\"\"\n",
-        "        # Create a balanced board with different tile types\n",
-        "        tile_types = {\n",
-        "            \"Investment\": 8,\n",
-        "            \"Financing\": 2,\n",
-        "            \"Event\": 4,\n",
-        "            \"Neutral\": 4,\n",
-        "            \"Special\": 2\n",
-        "        }\n",
-        "\n",
-        "        # Create a list of positions for each tile type\n",
-        "        positions = list(range(20))\n",
-        "        random.shuffle(positions)\n",
-        "\n",
-        "        # Assign tile types to positions\n",
-        "        investment_positions = positions[:tile_types[\"Investment\"]]\n",
-        "        financing_positions = positions[tile_types[\"Investment\"]:tile_types[\"Investment\"]+tile_types[\"Financing\"]]\n",
-        "        event_positions = positions[tile_types[\"Investment\"]+tile_types[\"Financing\"]:tile_types[\"Investment\"]+tile_types[\"Financing\"]+tile_types[\"Event\"]]\n",
-        "        neutral_positions = positions[tile_types[\"Investment\"]+tile_types[\"Financing\"]+tile_types[\"Event\"]:tile_types[\"Investment\"]+tile_types[\"Financing\"]+tile_types[\"Event\"]+tile_types[\"Neutral\"]]\n",
-        "        special_positions = positions[tile_types[\"Investment\"]+tile_types[\"Financing\"]+tile_types[\"Event\"]+tile_types[\"Neutral\"]:]\n",
-        "\n",
-        "        # Create board with 20 tiles\n",
-        "        self.board = [None] * 20\n",
-        "\n",
-        "        # Assign Investment tiles\n",
-        "        for i, pos in enumerate(investment_positions):\n",
-        "            project = self.projects[i % len(self.projects)]\n",
-        "            self.board[pos] = Tile(pos, f\"Investment: {project.name}\", \"Investment\", project)\n",
-        "\n",
-        "        # Assign Financing tiles\n",
-        "        for i, pos in enumerate(financing_positions):\n",
-        "            self.board[pos] = Tile(pos, \"Financing Opportunity\", \"Financing\")\n",
-        "\n",
-        "        # Assign Event tiles\n",
-        "        for i, pos in enumerate(event_positions):\n",
-        "            self.board[pos] = Tile(pos, \"Market Event\", \"Event\")\n",
-        "\n",
-        "        # Assign Neutral tiles\n",
-        "        for i, pos in enumerate(neutral_positions):\n",
-        "            self.board[pos] = Tile(pos, \"Revenue Collection\", \"Neutral\")\n",
-        "\n",
-        "        # Assign Special tiles\n",
-        "        self.board[special_positions[0]] = Tile(special_positions[0], \"IPO Opportunity\", \"Special\", \"IPO\")\n",
-        "        self.board[special_positions[1]] = Tile(special_positions[1], \"Strategic Decision\", \"Special\", \"Strategy\")\n",
-        "\n",
-        "    def add_player(self, name):\n",
-        "        \"\"\"Add a player to the game\"\"\"\n",
-        "        player = Player(name)\n",
-        "        self.players.append(player)\n",
-        "\n",
-        "    def roll_dice(self):\n",
-        "        \"\"\"Roll a dice (1-6)\"\"\"\n",
-        "        return random.randint(1, 6)\n",
-        "\n",
-        "    def move_player(self, player, steps):\n",
-        "        \"\"\"Move player on the board\"\"\"\n",
-        "        player.position = (player.position + steps) % len(self.board)\n",
-        "        return self.board[player.position]\n",
-        "\n",
-        "    def handle_investment_tile(self, player, tile):\n",
-        "        \"\"\"Handle landing on an investment tile\"\"\"\n",
-        "        project = tile.action\n",
-        "\n",
-        "        if project.owner is not None:\n",
-        "            print(f\"This project is already owned by {project.owner.name}\")\n",
-        "            return\n",
-        "\n",
-        "        print(f\"\\nInvestment Opportunity: {project.name}\")\n",
-        "        print(f\"Cost: ${project.cost}M\")\n",
-        "        print(f\"Annual Cash Flow: ${project.annual_cash_flow}M for {project.life} years\")\n",
-        "        print(f\"Risk Level: {project.risk_level}\")\n",
-        "        print(f\"User Gain: {project.user_gain}M users\")\n",
-        "        print(f\"NPV: ${project.calculate_npv():.2f}M\")\n",
-        "        print(f\"IRR: {project.calculate_irr()*100:.2f}%\")\n",
-        "        print(f\"Payback Period: {project.calculate_payback_period():.2f} years\")\n",
-        "\n",
-        "        if not player.can_afford(project.cost):\n",
-        "            print(f\"You cannot afford this project (Cash: ${player.cash}M)\")\n",
-        "            return\n",
-        "\n",
-        "        choice = input(f\"\\nDo you want to invest in {project.name} for ${project.cost}M? (y/n): \").lower()\n",
-        "        if choice == 'y':\n",
-        "            if player.pay(project.cost):\n",
-        "                player.add_project(project, self.current_round)\n",
-        "                player.add_users(project.user_gain)\n",
-        "                print(f\"\\nYou have successfully invested in {project.name}!\")\n",
-        "                print(f\"You gained {project.user_gain}M users!\")\n",
-        "            else:\n",
-        "                print(\"Transaction failed. Insufficient funds.\")\n",
-        "        else:\n",
-        "            print(\"You decided not to invest in this project.\")\n",
-        "\n",
-        "    def handle_financing_tile(self, player, tile):\n",
-        "        \"\"\"Handle landing on a financing tile\"\"\"\n",
-        "        print(\"\\nFinancing Opportunity\")\n",
-        "        print(\"Available options:\")\n",
-        "\n",
-        "        available_options = []\n",
-        "\n",
-        "        for i, option in enumerate(self.financing_options):\n",
-        "            # Check conditions\n",
-        "            if option.name == \"VC Funding\" and player.vc_funding_used:\n",
-        "                continue  # Skip if VC funding already used\n",
-        "            if option.name == \"IPO\" and self.current_round < 4:\n",
-        "                continue  # Skip if not in round 4 or 5\n",
-        "\n",
-        "            available_options.append(option)\n",
-        "            print(f\"{i+1}. {option.name}: {option.description} ({option.conditions})\")\n",
-        "\n",
-        "        if not available_options:\n",
-        "            print(\"No financing options available at this time.\")\n",
-        "            return\n",
-        "\n",
-        "        try:\n",
-        "            choice = int(input(\"\\nChoose a financing option (0 to skip): \"))\n",
-        "            if choice == 0:\n",
-        "                print(\"You decided not to take any financing.\")\n",
-        "                return\n",
-        "\n",
-        "            if 1 <= choice <= len(available_options):\n",
-        "                selected_option = available_options[choice-1]\n",
-        "\n",
-        "                if selected_option.name == \"Debt\":\n",
-        "                    amount = min(int(input(f\"How much debt do you want to take? (max ${selected_option.max_amount}M): \")), selected_option.max_amount)\n",
-        "                    player.receive(amount)\n",
-        "                    player.add_financing(selected_option, amount)\n",
-        "                    print(f\"You took ${amount}M in debt at 6% annual interest.\")\n",
-        "\n",
-        "                elif selected_option.name == \"VC Funding\":\n",
-        "                    player.receive(selected_option.max_amount)\n",
-        "                    player.add_financing(selected_option, selected_option.max_amount)\n",
-        "                    print(f\"You received ${selected_option.max_amount}M in VC funding, but lost 10% of your NPV.\")\n",
-        "\n",
-        "                elif selected_option.name == \"Equity\":\n",
-        "                    amount = min(int(input(f\"How much equity financing do you want to raise? (max ${selected_option.max_amount}M): \")), selected_option.max_amount)\n",
-        "                    player.receive(amount)\n",
-        "                    player.add_financing(selected_option, amount)\n",
-        "                    print(f\"You raised ${amount}M through equity, but diluted your NPV by 20%.\")\n",
-        "\n",
-        "                elif selected_option.name == \"IPO\":\n",
-        "                    player.receive(selected_option.max_amount)\n",
-        "                    player.add_financing(selected_option, selected_option.max_amount)\n",
-        "                    print(f\"You conducted an IPO and raised ${selected_option.max_amount}M, but your final NPV will be reduced by 30%.\")\n",
-        "            else:\n",
-        "                print(\"Invalid choice.\")\n",
-        "        except ValueError:\n",
-        "            print(\"Please enter a valid number.\")\n",
-        "\n",
-        "    def handle_event_tile(self, player, tile):\n",
-        "        \"\"\"Handle landing on an event tile\"\"\"\n",
-        "        event = random.choice(self.events)\n",
-        "        print(f\"\\nEvent: {event.name}\")\n",
-        "        print(f\"Description: {event.description}\")\n",
-        "        print(f\"Impact: {event.impact}\")\n",
-        "\n",
-        "        # Apply event effects\n",
-        "        if event.name == \"Economic Downturn\":\n",
-        "            # 15% revenue reduction this round\n",
-        "            revenue_reduction = sum(p.annual_cash_flow for p in player.projects) * 0.15\n",
-        "            player.cash -= revenue_reduction\n",
-        "            print(f\"You lost ${revenue_reduction:.2f}M in revenue due to the economic downturn.\")\n",
-        "\n",
-        "        elif event.name == \"Cybersecurity Breach\":\n",
-        "            # $15M cash loss unless secured\n",
-        "            has_security = any(p.name == \"AI Fraud Prevention\" or p.name == \"Blockchain Integration\" for p in player.projects)\n",
-        "            if has_security:\n",
-        "                print(\"Your security investments protected you from the breach!\")\n",
-        "            else:\n",
-        "                player.cash -= 15\n",
-        "                print(\"You lost $15M due to the cybersecurity breach.\")\n",
-        "\n",
-        "        elif event.name == \"Data Leak Scandal\":\n",
-        "            # Lose 1M users\n",
-        "            player.lose_users(1)\n",
-        "            print(\"You lost 1M users due to the data leak scandal.\")\n",
-        "\n",
-        "        elif event.name == \"Regulatory Fine\":\n",
-        "            # $10M fine if compliance project missing\n",
-        "            has_compliance = any(p.name == \"AI Fraud Prevention\" for p in player.projects)\n",
-        "            if has_compliance:\n",
-        "                print(\"Your compliance investments protected you from the fine!\")\n",
-        "            else:\n",
-        "                player.cash -= 10\n",
-        "                print(\"You were fined $10M due to regulatory issues.\")\n",
-        "\n",
-        "        elif event.name == \"System Crash\":\n",
-        "            # Skip next turn\n",
-        "            player.skip_next_turn = True\n",
-        "            print(\"You will skip your next turn due to the system crash.\")\n",
-        "\n",
-        "        elif event.name == \"Market Expansion\":\n",
-        "            # Gain 0.5M users\n",
-        "            player.add_users(0.5)\n",
-        "            print(\"You gained 0.5M users due to market expansion.\")\n",
-        "\n",
-        "        elif event.name == \"Strategic Partnership\":\n",
-        "            # Gain $10M\n",
-        "            player.receive(10)\n",
-        "            print(\"You gained $10M from a strategic partnership.\")\n",
-        "\n",
-        "        elif event.name == \"Talent Acquisition\":\n",
-        "            # Next project costs 10% less\n",
-        "            print(\"Your next project will cost 10% less due to talent acquisition.\")\n",
-        "            # This will be handled when the player buys their next project\n",
-        "\n",
-        "    def handle_neutral_tile(self, player, tile):\n",
-        "        \"\"\"Handle landing on a neutral tile\"\"\"\n",
-        "        print(\"\\nRevenue Collection\")\n",
-        "        revenue = player.collect_project_revenues()\n",
-        "        print(f\"You collected ${revenue}M in revenue from your projects.\")\n",
-        "\n",
-        "    def handle_special_tile(self, player, tile):\n",
-        "        \"\"\"Handle landing on a special tile\"\"\"\n",
-        "        if tile.action == \"IPO\":\n",
-        "            if self.current_round >= 4 and not player.ipo_done:\n",
-        "                choice = input(\"\\nDo you want to conduct an IPO? This will raise $100M but reduce your final NPV by 30%. (y/n): \").lower()\n",
-        "                if choice == 'y':\n",
-        "                    player.receive(100)\n",
-        "                    player.ipo_done = True\n",
-        "                    print(\"You successfully conducted an IPO and raised $100M!\")\n",
-        "                else:\n",
-        "                    print(\"You decided not to conduct an IPO at this time.\")\n",
-        "            else:\n",
-        "                print(\"\\nIPO is only available in rounds 4 and 5, and only once per game.\")\n",
-        "\n",
-        "        elif tile.action == \"Strategy\":\n",
-        "            print(\"\\nStrategic Decision Point\")\n",
-        "            if not player.projects:\n",
-        "                print(\"You don't have any projects to make strategic decisions about.\")\n",
-        "                return\n",
-        "\n",
-        "            print(\"Your projects:\")\n",
-        "            for i, project in enumerate(player.projects):\n",
-        "                print(f\"{i+1}. {project.name}\")\n",
-        "\n",
-        "            try:\n",
-        "                project_choice = int(input(\"\\nChoose a project to make a strategic decision about (0 to skip): \"))\n",
-        "                if project_choice == 0:\n",
-        "                    print(\"You decided not to make any strategic decisions.\")\n",
-        "                    return\n",
-        "\n",
-        "                if 1 <= project_choice <= len(player.projects):\n",
-        "                    selected_project = player.projects[project_choice-1]\n",
-        "\n",
-        "                    print(\"\\nStrategic options:\")\n",
-        "                    print(\"1. Expand (Increase annual cash flow by 50% for $20M)\")\n",
-        "                    print(\"2. Pivot (Change project focus for $15M)\")\n",
-        "                    print(\"3. Sell (Recover 50% of initial investment)\")\n",
-        "\n",
-        "                    strategy_choice = int(input(\"\\nChoose a strategic option (0 to skip): \"))\n",
-        "\n",
-        "                    if strategy_choice == 1:  # Expand\n",
-        "                        if player.can_afford(20):\n",
-        "                            player.pay(20)\n",
-        "                            selected_project.annual_cash_flow *= 1.5\n",
-        "                            print(f\"You expanded {selected_project.name}! Annual cash flow increased to ${selected_project.annual_cash_flow}M.\")\n",
-        "                        else:\n",
-        "                            print(\"You cannot afford this expansion.\")\n",
-        "\n",
-        "                    elif strategy_choice == 2:  # Pivot\n",
-        "                        if player.can_afford(15):\n",
-        "                            player.pay(15)\n",
-        "                            selected_project.annual_cash_flow *= 1.2\n",
-        "                            selected_project.life += 1\n",
-        "                            print(f\"You pivoted {selected_project.name}! Annual cash flow increased to ${selected_project.annual_cash_flow}M and life extended by 1 year.\")\n",
-        "                        else:\n",
-        "                            print(\"You cannot afford this pivot.\")\n",
-        "\n",
-        "                    elif strategy_choice == 3:  # Sell\n",
-        "                        recovery = selected_project.cost * 0.5\n",
-        "                        player.receive(recovery)\n",
-        "                        player.projects.remove(selected_project)\n",
-        "                        selected_project.owner = None\n",
-        "                        print(f\"You sold {selected_project.name} and recovered ${recovery}M.\")\n",
-        "\n",
-        "                    else:\n",
-        "                        print(\"Invalid choice or you decided to skip.\")\n",
-        "                else:\n",
-        "                    print(\"Invalid project choice.\")\n",
-        "            except ValueError:\n",
-        "                print(\"Please enter a valid number.\")\n",
-        "\n",
-        "    def handle_end_of_round(self):\n",
-        "        \"\"\"Handle end of round activities\"\"\"\n",
-        "        print(\"\\n\" + \"=\"*50)\n",
-        "        print(f\"End of Round {self.current_round}\")\n",
-        "        print(\"=\"*50)\n",
-        "\n",
-        "        # Apply maintenance costs and debt interest\n",
-        "        for player in self.players:\n",
-        "            # Pay debt interest\n",
-        "            if player.debt > 0:\n",
-        "                interest = player.debt * 0.06\n",
-        "                if player.can_afford(interest):\n",
-        "                    player.cash -= interest\n",
-        "                    print(f\"{player.name} paid ${interest}M in debt interest.\")\n",
-        "                else:\n",
-        "                    # If player can't pay interest, they lose the game\n",
-        "                    print(f\"{player.name} couldn't pay ${interest}M in debt interest and is bankrupt!\")\n",
-        "                    self.players.remove(player)\n",
-        "\n",
-        "        # Show scoreboard\n",
-        "        self.show_scoreboard()\n",
-        "\n",
-        "        # Increment round\n",
-        "        self.current_round += 1\n",
-        "\n",
-        "        if self.current_round > 5:\n",
-        "            self.game_over = True\n",
-        "            self.end_game()\n",
-        "        else:\n",
-        "            print(f\"\\nStarting Round {self.current_round}...\")\n",
-        "            time.sleep(2)\n",
-        "\n",
-        "    def show_scoreboard(self):\n",
-        "        \"\"\"Show the current scoreboard\"\"\"\n",
-        "        print(\"\\nCurrent Standings:\")\n",
-        "\n",
-        "        headers = [\"Player\", \"Cash ($M)\", \"Users (M)\", \"Projects\", \"NPV ($M)\", \"Debt ($M)\"]\n",
-        "        table_data = []\n",
-        "\n",
-        "        for player in self.players:\n",
-        "            npv = player.calculate_total_npv(self.current_round)\n",
-        "            projects_count = len(player.projects)\n",
-        "            table_data.append([\n",
-        "                player.name,\n",
-        "                f\"{player.cash:.2f}\",\n",
-        "                f\"{player.users:.2f}\",\n",
-        "                projects_count,\n",
-        "                f\"{npv:.2f}\",\n",
-        "                f\"{player.debt:.2f}\"\n",
-        "            ])\n",
-        "\n",
-        "        print(tabulate(table_data, headers=headers, tablefmt=\"grid\"))\n",
-        "\n",
-        "    def end_game(self):\n",
-        "        \"\"\"End the game and determine the winner\"\"\"\n",
-        "        print(\"\\n\" + \"=\"*50)\n",
-        "        print(\"GAME OVER\")\n",
-        "        print(\"=\"*50)\n",
-        "\n",
-        "        # Calculate final scores\n",
-        "        final_scores = []\n",
-        "\n",
-        "        for player in self.players:\n",
-        "            npv = player.calculate_total_npv(self.current_round)\n",
-        "            npv_score = npv * 0.4  # 40% weight\n",
-        "            users_score = player.users * 0.3  # 30% weight\n",
-        "            cash_score = player.cash * 0.1  # 10% weight\n",
-        "\n",
-        "            # Bonus for strategic moves (20% weight)\n",
-        "            strategic_score = 0\n",
-        "            if player.ipo_done:\n",
-        "                strategic_score += 10\n",
-        "            strategic_score += len(player.projects) * 2\n",
-        "            strategic_score *= 0.2  # 20% weight\n",
-        "\n",
-        "            total_score = npv_score + users_score + cash_score + strategic_score\n",
-        "\n",
-        "            final_scores.append((player, total_score, npv, player.users, player.cash, strategic_score))\n",
-        "\n",
-        "        # Sort by total score\n",
-        "        final_scores.sort(key=lambda x: x[1], reverse=True)\n",
-        "\n",
-        "        # Display final results\n",
-        "        print(\"\\nFinal Results:\")\n",
-        "\n",
-        "        headers = [\"Rank\", \"Player\", \"Total Score\", \"NPV ($M)\", \"Users (M)\", \"Cash ($M)\", \"Strategic\"]\n",
-        "        table_data = []\n",
-        "\n",
-        "        for i, (player, score, npv, users, cash, strategic) in enumerate(final_scores):\n",
-        "            table_data.append([\n",
-        "                i+1,\n",
-        "                player.name,\n",
-        "                f\"{score:.2f}\",\n",
-        "                f\"{npv:.2f}\",\n",
-        "                f\"{users:.2f}\",\n",
-        "                f\"{cash:.2f}\",\n",
-        "                f\"{strategic:.2f}\"\n",
-        "            ])\n",
-        "\n",
-        "        print(tabulate(table_data, headers=headers, tablefmt=\"grid\"))\n",
-        "\n",
-        "        # Announce winner\n",
-        "        winner = final_scores[0][0]\n",
-        "        print(f\"\\nCongratulations, {winner.name}! You are the most successful CFO with a score of {final_scores[0][1]:.2f}!\")\n",
-        "\n",
-        "    def play_turn(self, player):\n",
-        "        \"\"\"Play a single turn for a player\"\"\"\n",
-        "        if player.skip_next_turn:\n",
-        "            print(f\"\\n{player.name}'s turn is skipped due to system crash.\")\n",
-        "            player.skip_next_turn = False\n",
-        "            return\n",
-        "\n",
-        "        print(\"\\n\" + \"=\"*50)\n",
-        "        print(f\"{player.name}'s Turn (Round {self.current_round})\")\n",
-        "        print(\"=\"*50)\n",
-        "        print(f\"Current Position: {player.position}\")\n",
-        "        print(f\"Cash: ${player.cash}M\")\n",
-        "        print(f\"Users: {player.users}M\")\n",
-        "        print(f\"Projects: {len(player.projects)}\")\n",
-        "\n",
-        "        input(\"\\nPress Enter to roll the dice...\")\n",
-        "\n",
-        "        dice_roll = self.roll_dice()\n",
-        "        print(f\"\\nYou rolled a {dice_roll}!\")\n",
-        "\n",
-        "        # Move player\n",
-        "        tile = self.move_player(player, dice_roll)\n",
-        "        print(f\"You landed on: {tile.name} (Position {tile.position})\")\n",
-        "\n",
-        "        # Handle tile action\n",
-        "        if tile.tile_type == \"Investment\":\n",
-        "            self.handle_investment_tile(player, tile)\n",
-        "        elif tile.tile_type == \"Financing\":\n",
-        "            self.handle_financing_tile(player, tile)\n",
-        "        elif tile.tile_type == \"Event\":\n",
-        "            self.handle_event_tile(player, tile)\n",
-        "        elif tile.tile_type == \"Neutral\":\n",
-        "            self.handle_neutral_tile(player, tile)\n",
-        "        elif tile.tile_type == \"Special\":\n",
-        "            self.handle_special_tile(player, tile)\n",
-        "\n",
-        "    def play_game(self):\n",
-        "        \"\"\"Main game loop\"\"\"\n",
-        "        # Get number of players\n",
-        "        num_players = int(input(\"Enter number of players (3-5): \"))\n",
-        "        while num_players < 3 or num_players > 5:\n",
-        "            num_players = int(input(\"Please enter a valid number of players (3-5): \"))\n",
-        "\n",
-        "        # Get player names\n",
-        "        for i in range(num_players):\n",
-        "            name = input(f\"Enter name for Player {i+1}: \")\n",
-        "            self.add_player(name)\n",
-        "\n",
-        "        print(\"\\nStarting Finopoly Game!\")\n",
-        "        print(\"Each player starts with $100M and 1M users.\")\n",
-        "        print(\"The goal is to maximize your company value over 5 rounds.\")\n",
-        "\n",
-        "        # Main game loop\n",
-        "        while not self.game_over:\n",
-        "            # Play a round\n",
-        "            for i in range(len(self.players)):\n",
-        "                self.current_player_index = i\n",
-        "                self.play_turn(self.players[i])\n",
-        "\n",
-        "                # Check if game is over\n",
-        "                if self.game_over:\n",
-        "                    break\n",
-        "\n",
-        "                # Pause between turns\n",
-        "                if i < len(self.players) - 1:\n",
-        "                    input(\"\\nPress Enter for next player's turn...\")\n",
-        "\n",
-        "            # End of round\n",
-        "            if not self.game_over:\n",
-        "                self.handle_end_of_round()\n",
-        "\n",
-        "# Run the game\n",
-        "if __name__ == \"__main__\":\n",
-        "    try:\n",
-        "        # Clear screen\n",
-        "        os.system('cls' if os.name == 'nt' else 'clear')\n",
-        "\n",
-        "        print\n",
-        "        # Clear screen\n",
-        "        os.system('cls' if os.name == 'nt' else 'clear')\n",
-        "\n",
-        "        print(\"\"\"\n",
-        "╔═══════════════════════════════════════════════════════════════╗\n",
-        "║                         FINOPOLY                              ║\n",
-        "║           The Financial Management Simulation Game            ║\n",
-        "╚═══════════════════════════════════════════════════════════════╝\n",
-        "\"\"\")\n",
-        "\n",
-        "        game = Finopoly()\n",
-        "        game.play_game()\n",
-        "    except Exception as e:\n",
-        "        print(f\"An error occurred: {e}\")"
-      ],
-      "metadata": {
-        "colab": {
-          "base_uri": "https://localhost:8080/"
-        },
-        "id": "OuJpodsBRi8V",
-        "outputId": "5326ecef-3618-493b-8d91-04d6ed4ecc4e"
-      },
-      "execution_count": 2,
-      "outputs": [
-        {
-          "output_type": "stream",
-          "name": "stdout",
-          "text": [
-            "\n",
-            "╔═══════════════════════════════════════════════════════════════╗\n",
-            "║                         FINOPOLY                              ║\n",
-            "║           The Financial Management Simulation Game            ║\n",
-            "╚═══════════════════════════════════════════════════════════════╝\n",
-            "\n",
-            "Enter number of players (3-5): 4\n",
-            "Enter name for Player 1: dehi\n",
-            "Enter name for Player 2: hjr\n",
-            "Enter name for Player 3: tyu\n",
-            "Enter name for Player 4: poo\n",
-            "\n",
-            "Starting Finopoly Game!\n",
-            "Each player starts with $100M and 1M users.\n",
-            "The goal is to maximize your company value over 5 rounds.\n",
-            "\n",
-            "==================================================\n",
-            "dehi's Turn (Round 1)\n",
-            "==================================================\n",
-            "Current Position: 0\n",
-            "Cash: $100M\n",
-            "Users: 1M\n",
-            "Projects: 0\n",
-            "\n",
-            "Press Enter to roll the dice...\n",
-            "\n",
-            "You rolled a 2!\n",
-            "You landed on: Revenue Collection (Position 2)\n",
-            "\n",
-            "Revenue Collection\n",
-            "You collected $0M in revenue from your projects.\n",
-            "\n",
-            "Press Enter for next player's turn...\n",
-            "\n",
-            "==================================================\n",
-            "hjr's Turn (Round 1)\n",
-            "==================================================\n",
-            "Current Position: 0\n",
-            "Cash: $100M\n",
-            "Users: 1M\n",
-            "Projects: 0\n",
-            "\n",
-            "Press Enter to roll the dice...\n",
-            "\n",
-            "You rolled a 3!\n",
-            "You landed on: Investment: Customer Support AI (Position 3)\n",
-            "\n",
-            "Investment Opportunity: Customer Support AI\n",
-            "Cost: $30M\n",
-            "Annual Cash Flow: $18M for 2 years\n",
-            "Risk Level: Medium\n",
-            "User Gain: 0.8M users\n",
-            "NPV: $1.24M\n",
-            "IRR: 10.00%\n",
-            "Payback Period: 1.67 years\n",
-            "\n",
-            "Do you want to invest in Customer Support AI for $30M? (y/n): yes\n",
-            "You decided not to invest in this project.\n",
-            "\n",
-            "Press Enter for next player's turn...\n",
-            "\n",
-            "==================================================\n",
-            "tyu's Turn (Round 1)\n",
-            "==================================================\n",
-            "Current Position: 0\n",
-            "Cash: $100M\n",
-            "Users: 1M\n",
-            "Projects: 0\n",
-            "\n",
-            "Press Enter to roll the dice...\n",
-            "\n",
-            "You rolled a 2!\n",
-            "You landed on: Revenue Collection (Position 2)\n",
-            "\n",
-            "Revenue Collection\n",
-            "You collected $0M in revenue from your projects.\n",
-            "\n",
-            "Press Enter for next player's turn...\n",
-            "\n",
-            "==================================================\n",
-            "poo's Turn (Round 1)\n",
-            "==================================================\n",
-            "Current Position: 0\n",
-            "Cash: $100M\n",
-            "Users: 1M\n",
-            "Projects: 0\n",
-            "\n",
-            "Press Enter to roll the dice...\n",
-            "\n",
-            "You rolled a 3!\n",
-            "You landed on: Investment: Customer Support AI (Position 3)\n",
-            "\n",
-            "Investment Opportunity: Customer Support AI\n",
-            "Cost: $30M\n",
-            "Annual Cash Flow: $18M for 2 years\n",
-            "Risk Level: Medium\n",
-            "User Gain: 0.8M users\n",
-            "NPV: $1.24M\n",
-            "IRR: 10.00%\n",
-            "Payback Period: 1.67 years\n",
-            "\n",
-            "Do you want to invest in Customer Support AI for $30M? (y/n): no\n",
-            "You decided not to invest in this project.\n",
-            "\n",
-            "==================================================\n",
-            "End of Round 1\n",
-            "==================================================\n",
-            "\n",
-            "Current Standings:\n",
-            "+----------+-------------+-------------+------------+------------+-------------+\n",
-            "| Player   |   Cash ($M) |   Users (M) |   Projects |   NPV ($M) |   Debt ($M) |\n",
-            "+==========+=============+=============+============+============+=============+\n",
-            "| dehi     |         100 |           1 |          0 |          0 |           0 |\n",
-            "+----------+-------------+-------------+------------+------------+-------------+\n",
-            "| hjr      |         100 |           1 |          0 |          0 |           0 |\n",
-            "+----------+-------------+-------------+------------+------------+-------------+\n",
-            "| tyu      |         100 |           1 |          0 |          0 |           0 |\n",
-            "+----------+-------------+-------------+------------+------------+-------------+\n",
-            "| poo      |         100 |           1 |          0 |          0 |           0 |\n",
-            "+----------+-------------+-------------+------------+------------+-------------+\n",
-            "\n",
-            "Starting Round 2...\n",
-            "\n",
-            "==================================================\n",
-            "dehi's Turn (Round 2)\n",
-            "==================================================\n",
-            "Current Position: 2\n",
-            "Cash: $100M\n",
-            "Users: 1M\n",
-            "Projects: 0\n",
-            "\n",
-            "Press Enter to roll the dice...\n",
-            "\n",
-            "You rolled a 6!\n",
-            "You landed on: Financing Opportunity (Position 8)\n",
-            "\n",
-            "Financing Opportunity\n",
-            "Available options:\n",
-            "1. Debt: Loan at 6% annual interest (Max $50M per round)\n",
-            "2. VC Funding: Raise $40M but lose 10% NPV (Once per game)\n",
-            "3. Equity: Raise capital but dilute 20% NPV (Once per round)\n",
-            "\n",
-            "Choose a financing option (0 to skip): 3\n",
-            "How much equity financing do you want to raise? (max $60M): 40\n",
-            "You raised $40M through equity, but diluted your NPV by 20%.\n",
-            "\n",
-            "Press Enter for next player's turn...\n",
-            "\n",
-            "==================================================\n",
-            "hjr's Turn (Round 2)\n",
-            "==================================================\n",
-            "Current Position: 3\n",
-            "Cash: $100M\n",
-            "Users: 1M\n",
-            "Projects: 0\n",
-            "\n",
-            "Press Enter to roll the dice...\n",
-            "\n",
-            "You rolled a 4!\n",
-            "You landed on: Market Event (Position 7)\n",
-            "\n",
-            "Event: Regulatory Fine\n",
-            "Description: Regulatory issues lead to fine\n",
-            "Impact: −$10M cash if compliance project missing\n",
-            "You were fined $10M due to regulatory issues.\n",
-            "\n",
-            "Press Enter for next player's turn...\n",
-            "\n",
-            "==================================================\n",
-            "tyu's Turn (Round 2)\n",
-            "==================================================\n",
-            "Current Position: 2\n",
-            "Cash: $100M\n",
-            "Users: 1M\n",
-            "Projects: 0\n",
-            "\n",
-            "Press Enter to roll the dice...\n",
-            "\n",
-            "You rolled a 2!\n",
-            "You landed on: Market Event (Position 4)\n",
-            "\n",
-            "Event: Cybersecurity Breach\n",
-            "Description: Security breach costs money\n",
-            "Impact: −$15M cash unless secured\n",
-            "You lost $15M due to the cybersecurity breach.\n",
-            "\n",
-            "Press Enter for next player's turn...\n",
-            "\n",
-            "==================================================\n",
-            "poo's Turn (Round 2)\n",
-            "==================================================\n",
-            "Current Position: 3\n",
-            "Cash: $100M\n",
-            "Users: 1M\n",
-            "Projects: 0\n",
-            "\n",
-            "Press Enter to roll the dice...\n",
-            "\n",
-            "You rolled a 5!\n",
-            "You landed on: Financing Opportunity (Position 8)\n",
-            "\n",
-            "Financing Opportunity\n",
-            "Available options:\n",
-            "1. Debt: Loan at 6% annual interest (Max $50M per round)\n",
-            "2. VC Funding: Raise $40M but lose 10% NPV (Once per game)\n",
-            "3. Equity: Raise capital but dilute 20% NPV (Once per round)\n",
-            "\n",
-            "Choose a financing option (0 to skip): 0\n",
-            "You decided not to take any financing.\n",
-            "\n",
-            "==================================================\n",
-            "End of Round 2\n",
-            "==================================================\n",
-            "\n",
-            "Current Standings:\n",
-            "+----------+-------------+-------------+------------+------------+-------------+\n",
-            "| Player   |   Cash ($M) |   Users (M) |   Projects |   NPV ($M) |   Debt ($M) |\n",
-            "+==========+=============+=============+============+============+=============+\n",
-            "| dehi     |         140 |           1 |          0 |          0 |           0 |\n",
-            "+----------+-------------+-------------+------------+------------+-------------+\n",
-            "| hjr      |          90 |           1 |          0 |          0 |           0 |\n",
-            "+----------+-------------+-------------+------------+------------+-------------+\n",
-            "| tyu      |          85 |           1 |          0 |          0 |           0 |\n",
-            "+----------+-------------+-------------+------------+------------+-------------+\n",
-            "| poo      |         100 |           1 |          0 |          0 |           0 |\n",
-            "+----------+-------------+-------------+------------+------------+-------------+\n",
-            "\n",
-            "Starting Round 3...\n",
-            "\n",
-            "==================================================\n",
-            "dehi's Turn (Round 3)\n",
-            "==================================================\n",
-            "Current Position: 8\n",
-            "Cash: $140M\n",
-            "Users: 1M\n",
-            "Projects: 0\n",
-            "\n",
-            "Press Enter to roll the dice...\n",
-            "\n",
-            "You rolled a 2!\n",
-            "You landed on: Market Event (Position 10)\n",
-            "\n",
-            "Event: Talent Acquisition\n",
-            "Description: Key talent joins company\n",
-            "Impact: Next project costs 10% less\n",
-            "Your next project will cost 10% less due to talent acquisition.\n",
-            "\n",
-            "Press Enter for next player's turn...\n",
-            "\n",
-            "==================================================\n",
-            "hjr's Turn (Round 3)\n",
-            "==================================================\n",
-            "Current Position: 7\n",
-            "Cash: $90M\n",
-            "Users: 1M\n",
-            "Projects: 0\n",
-            "\n",
-            "Press Enter to roll the dice...\n",
-            "\n",
-            "You rolled a 2!\n",
-            "You landed on: Revenue Collection (Position 9)\n",
-            "\n",
-            "Revenue Collection\n",
-            "You collected $0M in revenue from your projects.\n",
-            "\n",
-            "Press Enter for next player's turn...\n",
-            "\n",
-            "==================================================\n",
-            "tyu's Turn (Round 3)\n",
-            "==================================================\n",
-            "Current Position: 4\n",
-            "Cash: $85M\n",
-            "Users: 1M\n",
-            "Projects: 0\n",
-            "\n",
-            "Press Enter to roll the dice...\n",
-            "\n",
-            "You rolled a 4!\n",
-            "You landed on: Financing Opportunity (Position 8)\n",
-            "\n",
-            "Financing Opportunity\n",
-            "Available options:\n",
-            "1. Debt: Loan at 6% annual interest (Max $50M per round)\n",
-            "2. VC Funding: Raise $40M but lose 10% NPV (Once per game)\n",
-            "3. Equity: Raise capital but dilute 20% NPV (Once per round)\n",
-            "\n",
-            "Choose a financing option (0 to skip): 8\n",
-            "Invalid choice.\n",
-            "\n",
-            "Press Enter for next player's turn...\n",
-            "\n",
-            "==================================================\n",
-            "poo's Turn (Round 3)\n",
-            "==================================================\n",
-            "Current Position: 8\n",
-            "Cash: $100M\n",
-            "Users: 1M\n",
-            "Projects: 0\n",
-            "\n",
-            "Press Enter to roll the dice...\n",
-            "\n",
-            "You rolled a 5!\n",
-            "You landed on: Investment: AI Fraud Prevention (Position 13)\n",
-            "\n",
-            "Investment Opportunity: AI Fraud Prevention\n",
-            "Cost: $30M\n",
-            "Annual Cash Flow: $15M for 3 years\n",
-            "Risk Level: Medium\n",
-            "User Gain: 1M users\n",
-            "NPV: $7.30M\n",
-            "IRR: 16.67%\n",
-            "Payback Period: 2.00 years\n",
-            "\n",
-            "Do you want to invest in AI Fraud Prevention for $30M? (y/n): no\n",
-            "You decided not to invest in this project.\n",
-            "\n",
-            "==================================================\n",
-            "End of Round 3\n",
-            "==================================================\n",
-            "\n",
-            "Current Standings:\n",
-            "+----------+-------------+-------------+------------+------------+-------------+\n",
-            "| Player   |   Cash ($M) |   Users (M) |   Projects |   NPV ($M) |   Debt ($M) |\n",
-            "+==========+=============+=============+============+============+=============+\n",
-            "| dehi     |         140 |           1 |          0 |          0 |           0 |\n",
-            "+----------+-------------+-------------+------------+------------+-------------+\n",
-            "| hjr      |          90 |           1 |          0 |          0 |           0 |\n",
-            "+----------+-------------+-------------+------------+------------+-------------+\n",
-            "| tyu      |          85 |           1 |          0 |          0 |           0 |\n",
-            "+----------+-------------+-------------+------------+------------+-------------+\n",
-            "| poo      |         100 |           1 |          0 |          0 |           0 |\n",
-            "+----------+-------------+-------------+------------+------------+-------------+\n",
-            "\n",
-            "Starting Round 4...\n",
-            "\n",
-            "==================================================\n",
-            "dehi's Turn (Round 4)\n",
-            "==================================================\n",
-            "Current Position: 10\n",
-            "Cash: $140M\n",
-            "Users: 1M\n",
-            "Projects: 0\n",
-            "\n",
-            "Press Enter to roll the dice...\n",
-            "\n",
-            "You rolled a 2!\n",
-            "You landed on: Revenue Collection (Position 12)\n",
-            "\n",
-            "Revenue Collection\n",
-            "You collected $0M in revenue from your projects.\n",
-            "\n",
-            "Press Enter for next player's turn...\n",
-            "\n",
-            "==================================================\n",
-            "hjr's Turn (Round 4)\n",
-            "==================================================\n",
-            "Current Position: 9\n",
-            "Cash: $90M\n",
-            "Users: 1M\n",
-            "Projects: 0\n",
-            "\n",
-            "Press Enter to roll the dice...\n",
-            "\n",
-            "You rolled a 3!\n",
-            "You landed on: Revenue Collection (Position 12)\n",
-            "\n",
-            "Revenue Collection\n",
-            "You collected $0M in revenue from your projects.\n",
-            "\n",
-            "Press Enter for next player's turn...\n",
-            "\n",
-            "==================================================\n",
-            "tyu's Turn (Round 4)\n",
-            "==================================================\n",
-            "Current Position: 8\n",
-            "Cash: $85M\n",
-            "Users: 1M\n",
-            "Projects: 0\n",
-            "\n",
-            "Press Enter to roll the dice...\n",
-            "\n",
-            "You rolled a 2!\n",
-            "You landed on: Market Event (Position 10)\n",
-            "\n",
-            "Event: Cybersecurity Breach\n",
-            "Description: Security breach costs money\n",
-            "Impact: −$15M cash unless secured\n",
-            "You lost $15M due to the cybersecurity breach.\n",
-            "\n",
-            "Press Enter for next player's turn...\n",
-            "\n",
-            "==================================================\n",
-            "poo's Turn (Round 4)\n",
-            "==================================================\n",
-            "Current Position: 13\n",
-            "Cash: $100M\n",
-            "Users: 1M\n",
-            "Projects: 0\n",
-            "\n",
-            "Press Enter to roll the dice...\n",
-            "\n",
-            "You rolled a 6!\n",
-            "You landed on: Investment: Mobile App Redesign (Position 19)\n",
-            "\n",
-            "Investment Opportunity: Mobile App Redesign\n",
-            "Cost: $25M\n",
-            "Annual Cash Flow: $15M for 2 years\n",
-            "Risk Level: Low\n",
-            "User Gain: 1.2M users\n",
-            "NPV: $1.03M\n",
-            "IRR: 10.00%\n",
-            "Payback Period: 1.67 years\n",
-            "\n",
-            "Do you want to invest in Mobile App Redesign for $25M? (y/n): yes\n",
-            "You decided not to invest in this project.\n",
-            "\n",
-            "==================================================\n",
-            "End of Round 4\n",
-            "==================================================\n",
-            "\n",
-            "Current Standings:\n",
-            "+----------+-------------+-------------+------------+------------+-------------+\n",
-            "| Player   |   Cash ($M) |   Users (M) |   Projects |   NPV ($M) |   Debt ($M) |\n",
-            "+==========+=============+=============+============+============+=============+\n",
-            "| dehi     |         140 |           1 |          0 |          0 |           0 |\n",
-            "+----------+-------------+-------------+------------+------------+-------------+\n",
-            "| hjr      |          90 |           1 |          0 |          0 |           0 |\n",
-            "+----------+-------------+-------------+------------+------------+-------------+\n",
-            "| tyu      |          70 |           1 |          0 |          0 |           0 |\n",
-            "+----------+-------------+-------------+------------+------------+-------------+\n",
-            "| poo      |         100 |           1 |          0 |          0 |           0 |\n",
-            "+----------+-------------+-------------+------------+------------+-------------+\n",
-            "\n",
-            "Starting Round 5...\n",
-            "\n",
-            "==================================================\n",
-            "dehi's Turn (Round 5)\n",
-            "==================================================\n",
-            "Current Position: 12\n",
-            "Cash: $140M\n",
-            "Users: 1M\n",
-            "Projects: 0\n",
-            "\n",
-            "Press Enter to roll the dice...\n",
-            "\n",
-            "You rolled a 2!\n",
-            "You landed on: Investment: Expand to Asia Market (Position 14)\n",
-            "\n",
-            "Investment Opportunity: Expand to Asia Market\n",
-            "Cost: $50M\n",
-            "Annual Cash Flow: $20M for 3 years\n",
-            "Risk Level: High\n",
-            "User Gain: 2M users\n",
-            "NPV: $-0.26M\n",
-            "IRR: 6.67%\n",
-            "Payback Period: 2.50 years\n",
-            "\n",
-            "Do you want to invest in Expand to Asia Market for $50M? (y/n): y\n",
-            "\n",
-            "You have successfully invested in Expand to Asia Market!\n",
-            "You gained 2M users!\n",
-            "\n",
-            "Press Enter for next player's turn...\n",
-            "\n",
-            "==================================================\n",
-            "hjr's Turn (Round 5)\n",
-            "==================================================\n",
-            "Current Position: 12\n",
-            "Cash: $90M\n",
-            "Users: 1M\n",
-            "Projects: 0\n",
-            "\n",
-            "Press Enter to roll the dice...\n",
-            "\n",
-            "You rolled a 6!\n",
-            "You landed on: Market Event (Position 18)\n",
-            "\n",
-            "Event: Cybersecurity Breach\n",
-            "Description: Security breach costs money\n",
-            "Impact: −$15M cash unless secured\n",
-            "You lost $15M due to the cybersecurity breach.\n",
-            "\n",
-            "Press Enter for next player's turn...\n",
-            "\n",
-            "==================================================\n",
-            "tyu's Turn (Round 5)\n",
-            "==================================================\n",
-            "Current Position: 10\n",
-            "Cash: $70M\n",
-            "Users: 1M\n",
-            "Projects: 0\n",
-            "\n",
-            "Press Enter to roll the dice...\n",
-            "\n",
-            "You rolled a 6!\n",
-            "You landed on: Investment: Retail Partnership (Position 16)\n",
-            "\n",
-            "Investment Opportunity: Retail Partnership\n",
-            "Cost: $40M\n",
-            "Annual Cash Flow: $18M for 3 years\n",
-            "Risk Level: High\n",
-            "User Gain: 1.8M users\n",
-            "NPV: $4.76M\n",
-            "IRR: 11.67%\n",
-            "Payback Period: 2.22 years\n",
-            "\n",
-            "Do you want to invest in Retail Partnership for $40M? (y/n): y\n",
-            "\n",
-            "You have successfully invested in Retail Partnership!\n",
-            "You gained 1.8M users!\n",
-            "\n",
-            "Press Enter for next player's turn...\n",
-            "\n",
-            "==================================================\n",
-            "poo's Turn (Round 5)\n",
-            "==================================================\n",
-            "Current Position: 19\n",
-            "Cash: $100M\n",
-            "Users: 1M\n",
-            "Projects: 0\n",
-            "\n",
-            "Press Enter to roll the dice...\n",
-            "\n",
-            "You rolled a 6!\n",
-            "You landed on: IPO Opportunity (Position 5)\n",
-            "\n",
-            "Do you want to conduct an IPO? This will raise $100M but reduce your final NPV by 30%. (y/n): y\n",
-            "You successfully conducted an IPO and raised $100M!\n",
-            "\n",
-            "==================================================\n",
-            "End of Round 5\n",
-            "==================================================\n",
-            "\n",
-            "Current Standings:\n",
-            "+----------+-------------+-------------+------------+------------+-------------+\n",
-            "| Player   |   Cash ($M) |   Users (M) |   Projects |   NPV ($M) |   Debt ($M) |\n",
-            "+==========+=============+=============+============+============+=============+\n",
-            "| dehi     |          90 |         3   |          1 |      39.79 |           0 |\n",
-            "+----------+-------------+-------------+------------+------------+-------------+\n",
-            "| hjr      |          75 |         1   |          0 |       0    |           0 |\n",
-            "+----------+-------------+-------------+------------+------------+-------------+\n",
-            "| tyu      |          30 |         2.8 |          1 |      44.76 |           0 |\n",
-            "+----------+-------------+-------------+------------+------------+-------------+\n",
-            "| poo      |         200 |         1   |          0 |       0    |           0 |\n",
-            "+----------+-------------+-------------+------------+------------+-------------+\n",
-            "\n",
-            "==================================================\n",
-            "GAME OVER\n",
-            "==================================================\n",
-            "\n",
-            "Final Results:\n",
-            "+--------+----------+---------------+------------+-------------+-------------+-------------+\n",
-            "|   Rank | Player   |   Total Score |   NPV ($M) |   Users (M) |   Cash ($M) |   Strategic |\n",
-            "+========+==========+===============+============+=============+=============+=============+\n",
-            "|      1 | poo      |         22.3  |       0    |         1   |         200 |         2   |\n",
-            "+--------+----------+---------------+------------+-------------+-------------+-------------+\n",
-            "|      2 | dehi     |         21.41 |      27.77 |         3   |          90 |         0.4 |\n",
-            "+--------+----------+---------------+------------+-------------+-------------+-------------+\n",
-            "|      3 | tyu      |         16.74 |      31.24 |         2.8 |          30 |         0.4 |\n",
-            "+--------+----------+---------------+------------+-------------+-------------+-------------+\n",
-            "|      4 | hjr      |          7.8  |       0    |         1   |          75 |         0   |\n",
-            "+--------+----------+---------------+------------+-------------+-------------+-------------+\n",
-            "\n",
-            "Congratulations, poo! You are the most successful CFO with a score of 22.30!\n"
-          ]
+import streamlit as st
+import random
+import math
+import time
+from tabulate import tabulate
+import os
+
+# --- Project Class (Same as before) ---
+class Project:
+    def __init__(self, name, cost, life, annual_cash_flow, real_option, risk_level, user_gain):
+        self.name = name
+        self.cost = cost
+        self.life = life
+        self.annual_cash_flow = annual_cash_flow
+        self.real_option = real_option
+        self.risk_level = risk_level
+        self.user_gain = user_gain
+        self.owner = None
+        self.purchase_round = None
+
+    def calculate_npv(self, discount_rate=0.10):
+        npv = -self.cost
+        for year in range(1, self.life + 1):
+            npv += self.annual_cash_flow / ((1 + discount_rate) ** year)
+        return npv
+
+    def calculate_irr(self):
+        return (self.annual_cash_flow * self.life - self.cost) / (self.cost * self.life)
+
+    def calculate_payback_period(self):
+        return self.cost / self.annual_cash_flow
+
+    def calculate_profitability_index(self, discount_rate=0.10):
+        present_value = 0
+        for year in range(1, self.life + 1):
+            present_value += self.annual_cash_flow / ((1 + discount_rate) ** year)
+        return present_value / self.cost
+
+# --- FinancingOption Class (Same as before) ---
+class FinancingOption:
+    def __init__(self, name, description, max_amount, conditions, impact):
+        self.name = name
+        self.description = description
+        self.max_amount = max_amount
+        self.conditions = conditions
+        self.impact = impact
+
+# --- Event Class (Same as before) ---
+class Event:
+    def __init__(self, name, description, impact):
+        self.name = name
+        self.description = description
+        self.impact = impact
+
+# --- Tile Class (Same as before) ---
+class Tile:
+    def __init__(self, position, name, tile_type, action=None):
+        self.position = position
+        self.name = name
+        self.tile_type = tile_type
+        self.action = action
+
+# --- Player Class (Same as before) ---
+class Player:
+    def __init__(self, name, starting_cash=100):
+        self.name = name
+        self.cash = starting_cash
+        self.users = 1
+        self.position = 0
+        self.projects = []
+        self.financing_history = []
+        self.debt = 0
+        self.equity_dilution = 0
+        self.vc_funding_used = False
+        self.ipo_done = False
+        self.skip_next_turn = False
+
+    def calculate_total_npv(self, current_round):
+        total_npv = 0
+        for project in self.projects:
+            remaining_life = project.life - (current_round - project.purchase_round)
+            if remaining_life > 0:
+                npv = 0
+                for year in range(1, remaining_life + 1):
+                    npv += project.annual_cash_flow / ((1 + 0.10) ** year)
+                total_npv += npv
+        total_npv *= (1 - self.equity_dilution)
+        if self.ipo_done:
+            total_npv *= 0.7
+        return total_npv
+
+    def can_afford(self, amount):
+        return self.cash >= amount
+
+    def pay(self, amount):
+        if self.can_afford(amount):
+            self.cash -= amount
+            return True
+        return False
+
+    def receive(self, amount):
+        self.cash += amount
+
+    def add_users(self, count):
+        self.users += count
+
+    def lose_users(self, count):
+        self.users = max(0, self.users - count)
+
+    def add_project(self, project, current_round):
+        project.owner = self
+        project.purchase_round = current_round
+        self.projects.append(project)
+
+    def add_financing(self, financing, amount):
+        self.financing_history.append((financing, amount))
+        if financing.name == "Debt":
+            self.debt += amount
+        elif financing.name == "VC Funding":
+            self.vc_funding_used = True
+            self.equity_dilution += 0.10
+        elif financing.name == "Equity":
+            self.equity_dilution += 0.20
+        elif financing.name == "IPO":
+            self.ipo_done = True
+
+    def pay_debt_interest(self):
+        interest = self.debt * 0.06
+        if self.can_afford(interest):
+            self.cash -= interest
+            return True
+        return False
+
+    def collect_project_revenues(self):
+        total_revenue = 0
+        for project in self.projects:
+            total_revenue += project.annual_cash_flow
+        self.cash += total_revenue
+        return total_revenue
+
+# --- Finopoly Game Class ---
+class Finopoly:
+    def __init__(self):
+        self.players = []
+        self.current_round = 1
+        self.current_player_index = 0
+        self.board = []
+        self.projects = []
+        self.financing_options = []
+        self.events = []
+        self.game_over = False
+        self.num_rounds = 5 # Set the number of rounds
+
+        self.initialize_game()
+
+    def initialize_game(self):
+        self.create_projects()
+        self.create_financing_options()
+        self.create_events()
+        self.create_board()
+
+    def create_projects(self):
+        self.projects = [
+            Project("Expand to Asia Market", 50, 3, 20, "Expand", "High", 2),
+            Project("Referral Program", 20, 3, 12, "Scale", "Low", 1.5),
+            Project("Retail Partnership", 40, 3, 18, "User Trust", "High", 1.8),
+            Project("AI Fraud Prevention", 30, 3, 15, "Efficiency Gain", "Medium", 1),
+            Project("Product Launch", 35, 2, 25, "Rebrand", "Medium", 2.5),
+            Project("Mobile App Redesign", 25, 2, 15, "User Experience", "Low", 1.2),
+            Project("Blockchain Integration", 45, 3, 17, "Security", "High", 1.5),
+            Project("Customer Support AI", 30, 2, 18, "Efficiency", "Medium", 0.8)
+        ]
+
+    def create_financing_options(self):
+        self.financing_options = [
+            FinancingOption("Debt", "Loan at 6% annual interest", 50, "Max $50M per round", "6% annual interest"),
+            FinancingOption("VC Funding", "Raise $40M but lose 10% NPV", 40, "Once per game", "10% NPV dilution"),
+            FinancingOption("Equity", "Raise capital but dilute 20% NPV", 60, "Once per round", "20% NPV dilution"),
+            FinancingOption("IPO", "Raise $100M but lose 30% of final NPV", 100, "Only in Round 4 or 5", "30% NPV penalty")
+        ]
+
+    def create_events(self):
+        self.events = [
+            Event("Economic Downturn", "Economic downturn affects revenue", lambda player: setattr(player, 'cash', player.cash - sum(p.annual_cash_flow for p in player.projects) * 0.15)),
+            Event("Cybersecurity Breach", "Security breach costs money", lambda player: setattr(player, 'cash', player.cash - 15) if not any(p.name in ["AI Fraud Prevention", "Blockchain Integration"] for p in player.projects) else None),
+            Event("Data Leak Scandal", "Data leak affects user trust", lambda player: player.lose_users(1)),
+            Event("Regulatory Fine", "Regulatory issues lead to fine", lambda player: setattr(player, 'cash', player.cash - 10) if not any(p.name == "AI Fraud Prevention" for p in player.projects) else None),
+            Event("System Crash", "Major system failure", lambda player: setattr(player, 'skip_next_turn', True)),
+            Event("Market Expansion", "New market opportunity", lambda player: player.add_users(0.5)),
+            Event("Strategic Partnership", "New partnership opportunity", lambda player: player.receive(10)),
+            Event("Talent Acquisition", "Key talent joins company", lambda player: setattr(st.session_state, 'next_project_discount', 0.10)) # Using session state for temporary effect
+        ]
+
+    def create_board(self):
+        tile_types = {
+            "Investment": 8,
+            "Financing": 2,
+            "Event": 4,
+            "Neutral": 4,
+            "Special": 2
         }
-      ]
-    },
-    {
-      "cell_type": "code",
-      "source": [],
-      "metadata": {
-        "id": "g0XoGUVicN65"
-      },
-      "execution_count": null,
-      "outputs": []
-    }
-  ]
-}
+        positions = list(range(20))
+        random.shuffle(positions)
+
+        investment_positions = positions[:tile_types["Investment"]]
+        financing_positions = positions[tile_types["Investment"]:tile_types["Investment"]+tile_types["Financing"]]
+        event_positions = positions[tile_types["Investment"]+tile_types["Financing"]:tile_types["Investment"]+tile_types["Financing"]+tile_types["Event"]]
+        neutral_positions = positions[tile_types["Investment"]+tile_types["Financing"]+tile_types["Event"]:tile_types["Investment"]+tile_types["Financing"]+tile_types["Event"]+tile_types["Neutral"]]
+        special_positions = positions[tile_types["Investment"]+tile_types["Financing"]+tile_types["Event"]+tile_types["Neutral"]:]
+
+        self.board = [None] * 20
+
+        for i, pos in enumerate(investment_positions):
+            project = self.projects[i % len(self.projects)]
+            self.board[pos] = Tile(pos, f"Investment: {project.name}", "Investment", project)
+
+        for i, pos in enumerate(financing_positions):
+            self.board[pos] = Tile(pos, "Financing Opportunity", "Financing")
+
+        for i, pos in enumerate(event_positions):
+            self.board[pos] = Tile(pos, "Market Event", "Event")
+
+        for i, pos in enumerate(neutral_positions):
+            self.board[pos] = Tile(pos, "Revenue Collection", "Neutral")
+
+        self.board[special_positions[0]] = Tile(special_positions[0], "IPO Opportunity", "Special", "IPO")
+        self.board[special_positions[1]] = Tile(special_positions[1], "Strategic Decision", "Special", "Strategy")
+
+    def add_player(self, name):
+        player = Player(name)
+        self.players.append(player)
+
+    def roll_dice(self):
+        return random.randint(1, 6)
+
+    def move_player(self, player, steps):
+        player.position = (player.position + steps) % len(self.board)
+        return self.board[player.position]
+
+    def get_current_tile(self, player):
+        return self.board[player.position]
+
+    def handle_investment_tile_ui(self, player, tile):
+        project = tile.action
+        st.subheader(f"Investment Opportunity: {project.name}")
+        st.write(f"Cost: ${project.cost}M")
+        st.write(f"Annual Cash Flow: ${project.annual_cash_flow}M for {project.life} years")
+        st.write(f"Risk Level: {project.risk_level}")
+        st.write(f"User Gain: {project.user_gain}M users")
+        st.write(f"NPV: ${project.calculate_npv():.2f}M")
+        st.write(f"IRR: {project.calculate_irr()*100:.2f}%")
+        st.write(f"Payback Period: {project.calculate_payback_period():.2f} years")
+
+        if project.owner is not None:
+            st.write(f"This project is already owned by {project.owner.name}.")
+            if st.button("Next"):
+                st.session_state.game.next_player_turn()
+            return
+
+        if player.can_afford(project.cost):
+            if st.button(f"Invest in {project.name} for ${project.cost}M"):
+                player.pay(project.cost)
+                player.add_project(project, self.current_round)
+                player.add_users(project.user_gain)
+                st.write(f"You invested in {project.name}!")
+                st.session_state.game.next_player_turn()
+        else:
+            st.write("You cannot afford this project.")
+            if st.button("Next"):
+                st.session_state.game.next_player_turn()
+
+    def handle_financing_tile_ui(self, player, tile):
+        st.subheader("Financing Opportunity")
+        available_options = []
+        for i, option in enumerate(self.financing_options):
+            if option.name == "VC Funding" and player.vc_funding_used:
+                continue
+            if option.name == "IPO" and self.current_round < 4:
+                continue
+            available_options.append(option)
+            st.write(f"{i+1}. {option.name}: {option.description} ({option.conditions})")
+
+        if not available_options:
+            st.write("No financing options available at this time.")
+            if st.button("Next"):
+                st.session_state.game.next_player_turn()
+            return
+
+        selected_option_name = st.selectbox("Choose a financing option:", ["Skip"] + [opt.name for opt in available_options])
+
+        if selected_option_name != "Skip":
+            selected_option = next(opt for opt in self.financing_options if opt.name == selected_option_name)
+            if selected_option.name == "Debt":
+                amount = st.number_input(f"Amount to borrow (max ${selected_option.max_amount}M):", min_value=0, max_value=selected_option.max_amount, step=1)
+                if st.button("Take Debt"):
+                    if amount > 0:
+                        player.receive(amount)
+                        player.add_financing(selected_option, amount)
+                        st.write(f"You took ${amount}M in debt.")
+                        st.session_state.game.next_player_turn()
+            elif selected_option.name == "VC Funding":
+                if st.button("Get VC Funding"):
+                    player.receive(selected_option.max_amount)
+                    player.add_financing(selected_option, selected_option.max_amount)
+                    st.write(f"You received ${selected_option.max_amount}M in VC funding.")
+                    st.session_state.game.next_player_turn()
+            elif selected_option.name == "Equity":
+                amount = st.number_input(f"Amount to raise (max ${selected_option.max_amount}M):", min_value=0, max_value=selected_option.max_amount, step=1)
+                if st.button("Raise Equity"):
+                    if amount > 0:
+                        player.receive(amount)
+                        player.add_financing(selected_option, amount)
+                        st.write(f"You raised ${amount}M through equity.")
+                        st.session_state.game.next_player_turn()
+            elif selected_option.name == "IPO":
+                if st.button("Conduct IPO"):
+                        player.receive(selected_option.max_amount)
+                        player.add_financing(selected_option, selected_option.max_amount)
+                        st.write(f"You conducted an IPO and raised ${selected_option.max_amount}M.")
+                        st.session_state.game.next_player_turn()
+        else:
+            st.write("Invalid choice.")
+            if st.button("Next"):
+                st.session_state.game.next_player_turn()
+
+    def handle_event_tile_ui(self, player, tile):
+        event = random.choice(self.events)
+        st.subheader(f"Event: {event.name}")
+        st.write(f"Description: {event.description}")
+        st.write(f"Impact: {event.impact}")
+
+        event.impact(player)  # Apply the event's effect
+        st.session_state.game.next_player_turn()
+
+    def handle_neutral_tile_ui(self, player, tile):
+        st.subheader("Revenue Collection")
+        revenue = player.collect_project_revenues()
+        st.write(f"You collected ${revenue}M in revenue from your projects.")
+        st.session_state.game.next_player_turn()
+
+    def handle_special_tile_ui(self, player, tile):
+        if tile.action == "IPO":
+            if self.current_round >= 4 and not player.ipo_done:
+                if st.button("Conduct IPO? (+$100M, -30% final NPV)"):
+                    player.receive(100)
+                    player.ipo_done = True
+                    st.write("You conducted an IPO!")
+                    st.session_state.game.next_player_turn()
+                else:
+                    st.write("You decided not to do an IPO.")
+                    st.session_state.game.next_player_turn()
+            else:
+                st.write("IPO is only available in rounds 4 and 5, once per game.")
+                st.session_state.game.next_player_turn()
+
+        elif tile.action == "Strategy":
+            st.subheader("Strategic Decision Point")
+            if not player.projects:
+                st.write("You don't have any projects to make decisions about.")
+                st.session_state.game.next_player_turn()
+                return
+
+            selected_project_name = st.selectbox("Choose a project:", [p.name for p in player.projects])
+            selected_project = next(p for p in player.projects if p.name == selected_project_name)
+
+            strategy_choice = st.radio("Choose a strategy:", ["Skip", "Expand", "Pivot", "Sell"])
+
+            if strategy_choice == "Expand":
+                if player.can_afford(20):
+                    player.pay(20)
+                    selected_project.annual_cash_flow *= 1.5
+                    st.write(f"Expanded {selected_project.name}! Cash flow increased.")
+                else:
+                    st.write("You can't afford to expand.")
+                st.session_state.game.next_player_turn()
+            elif strategy_choice == "Pivot":
+                if player.can_afford(15):
+                    player.pay(15)
+                    selected_project.annual_cash_flow *= 1.2
+                    selected_project.life += 1
+                    st.write(f"Pivoted {selected_project.name}! Cash flow and life increased.")
+                else:
+                    st.write("You can't afford to pivot.")
+                st.session_state.game.next_player_turn()
+            elif strategy_choice == "Sell":
+                recovery = selected_project.cost * 0.5
+                player.receive(recovery)
+                player.projects.remove(selected_project)
+                selected_project.owner = None
+                st.write(f"Sold {selected_project.name} for ${recovery}M.")
+                st.session_state.game.next_player_turn()
+            elif strategy_choice == "Skip":
+                st.write("You decided not to make a strategic decision.")
+                st.session_state.game.next_player_turn()
+
+    def handle_end_of_round(self):
+        st.subheader(f"End of Round {self.current_round}")
+
+        bankrupt_players = []
+        for player in self.players:
+            if player.debt > 0:
+                if not player.pay_debt_interest():
+                    st.write(f"{player.name} is bankrupt and out of the game!")
+                    bankrupt_players.append(player)
+
+        for player in bankrupt_players:
+            self.players.remove(player)
+
+        self.show_scoreboard()
+
+        self.current_round += 1
+        if self.current_round > self.num_rounds:
+            self.game_over = True
+            self.end_game()
+        else:
+            st.write(f"Starting Round {self.current_round}...")
+
+    def show_scoreboard(self):
+        st.subheader("Current Standings")
+        headers = ["Player", "Cash ($M)", "Users (M)", "Projects", "NPV ($M)", "Debt ($M)"]
+        table_data = []
+        for player in self.players:
+            npv = player.calculate_total_npv(self.current_round)
+            table_data.append([player.name, f"{player.cash:.2f}", f"{player.users:.2f}", len(player.projects), f"{npv:.2f}", f"{player.debt:.2f}"])
+        st.table(tabulate(table_data, headers=headers, tablefmt="grid"))
+
+    def end_game(self):
+        st.subheader("GAME OVER")
+        final_scores = []
+        for player in self.players:
+            npv = player.calculate_total_npv(self.current_round)
+            npv_score = npv * 0.4
+            users_score = player.users * 0.3
+            cash_score = player.cash * 0.1
+            strategic_score = 0
+            if player.ipo_done:
+                strategic_score += 10
+            strategic_score += len(player.projects) * 2
+            strategic_score *= 0.2
+            total_score = npv_score + users_score + cash_score + strategic_score
+            final_scores.append((player, total_score, npv, player.users, player.cash, strategic_score))
+
+        final_scores.sort(key=lambda x: x[1], reverse=True)
+
+        st.subheader("Final Results")
+        headers = ["Rank", "Player", "Total Score", "NPV ($M)", "Users (M)", "Cash ($M)", "Strategic"]
+        table_data = []
+        for i, (player, score, npv, users, cash, strategic) in enumerate(final_scores):
+            table_data.append([i+1, player.name, f"{score:.2f}", f"{npv:.2f}", f"{users:.2f}", f"{cash:.2f}", f"{strategic:.2f}"])
+        st.table(tabulate(table_data, headers=headers, tablefmt="grid"))
+
+        winner = final_scores[0][0]
+        st.write(f"Congratulations, {winner.name}! You are the winner!")
+
+    def next_player_turn(self):
+        self.current_player_index = (self.current_player_index + 1) % len(self.players)
+        if self.current_player_index == 0:
+            self.handle_end_of_round()
+        if not self.game_over:
+            self.play_turn()
+
+    def play_turn(self):
+        player = self.players[self.current_player_index]
+        st.subheader(f"{player.name}'s Turn (Round {self.current_round})")
+        st.write(f"Current Position: {player.position}")
+        st.write(f"Cash: ${player.cash}M")
+        st.write(f"Users: {player.users}M")
+        st.write(f"Projects: {len(player.projects)}")
+
+        if player.skip_next_turn:
+            st.write(f"{player.name}'s turn is skipped due to system crash.")
+            player.skip_next_turn = False
+            self.next_player_turn()
+            return
+
+        if st.button("Roll Dice"):
+            dice_roll = self.roll_dice()
+            st.write(f"You rolled a {dice_roll}!")
+            tile = self.move_player(player, dice_roll)
+            st.write(f"You landed on: {tile.name} (Position {tile.position})")
+
+            if tile.tile_type == "Investment":
+                self.handle_investment_tile_ui(player, tile)
+            elif tile.tile_type == "Financing":
+                self.handle_financing_tile_ui(player, tile)
+            elif tile.tile_type == "Event":
+                self.handle_event_tile_ui(player, tile)
+            elif tile.tile_type == "Neutral":
+                self.handle_neutral_tile_ui(player, tile)
+            elif tile.tile_type == "Special":
+                self.handle_special_tile_ui(player, tile)
+        else:
+            st.stop() # prevent the rest of the code from running until the button is clicked
+
+def main():
+    st.title("Finopoly")
+
+    if 'game' not in st.session_state:
+        st.session_state.game = Finopoly()
+        st.session_state.player_names = []
+        st.session_state.num_players = 0
+
+    if st.session_state.num_players == 0:
+        st.session_state.num_players = st.number_input("Enter number of players (3-5):", min_value=3, max_value=5, step=1)
+        if st.session_state.num_players > 0:
+            for i in range(st.session_state.num_players):
+                name = st.text_input(f"Enter name for Player {i+1}:")
+                st.session_state.player_names.append(name)
+            if all(name != "" for name in st.session_state.player_names):
+                for name in st.session_state.player_names:
+                    st.session_state.game.add_player(name)
+                st.write("Starting Finopoly Game!")
+                st.write("Each player starts with $100M and 1M users.")
+                st.write("The goal is to maximize your company value over 5 rounds.")
+                st.session_state.game.play_turn()
+    else:
+        if not st.session_state.game.game_over:
+            st.session_state.game.play_turn()
+        else:
+            st.session_state.game.end_game()
+
+if __name__ == "__main__":
+    main()
